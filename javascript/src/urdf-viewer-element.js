@@ -20,7 +20,7 @@ class URDFViewer extends HTMLElement {
 
     static get observedAttributes() {
 
-        return ['package', 'urdf', 'up', 'display-shadow', 'ambient-color', 'ignore-limits', 'show-collision'];
+        return ['package', 'urdf', 'up', 'display-shadow', 'ambient-color', 'ignore-limits', 'show-collision', 'show-axes'];
 
     }
 
@@ -50,6 +50,9 @@ class URDFViewer extends HTMLElement {
 
     get showCollision() { return this.hasAttribute('show-collision') || false; }
     set showCollision(val) { val ? this.setAttribute('show-collision', true) : this.removeAttribute('show-collision'); }
+
+    get showAxes() { return this.hasAttribute('show-axes') || false; }
+    set showAxes(val) { val ? this.setAttribute('show-axes', true) : this.removeAttribute('show-axes'); }
 
     get jointValues() {
 
@@ -128,6 +131,10 @@ class URDFViewer extends HTMLElement {
         const world = new THREE.Object3D();
         scene.add(world);
 
+        const axesGroup = new THREE.Group();
+        axesGroup.visible = false;
+        scene.add(axesGroup);
+
         const plane = new THREE.Mesh(
             new THREE.PlaneGeometry(40, 40),
             new THREE.ShadowMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.25 }),
@@ -157,6 +164,8 @@ class URDFViewer extends HTMLElement {
         this.plane = plane;
         this.directionalLight = dirLight;
         this.ambientLight = ambientLight;
+        this.axesGroup = axesGroup;
+        this.axesArrows = new Map();
 
         this._setUp(this.up);
 
@@ -242,6 +251,9 @@ class URDFViewer extends HTMLElement {
     attributeChangedCallback(attr, oldval, newval) {
 
         this._updateCollisionVisibility();
+        if (attr === 'show-axes') {
+            this.axesGroup.visible = this.showAxes;
+        }
         if (!this.noAutoRecenter) {
             this.recenter();
         }
@@ -406,6 +418,8 @@ class URDFViewer extends HTMLElement {
 
         }
 
+        this._clearAxesVisualization();
+
         requestAnimationFrame(() => {
 
             this._loadUrdf(this.package, this.urdf);
@@ -508,6 +522,7 @@ class URDFViewer extends HTMLElement {
 
                 this._setIgnoreLimits(this.ignoreLimits);
                 this._updateCollisionVisibility();
+                this._createAxesVisualization();
 
                 this.dispatchEvent(new CustomEvent('urdf-processed', { bubbles: true, cancelable: true, composed: true }));
                 this.dispatchEvent(new CustomEvent('geometry-loaded', { bubbles: true, cancelable: true, composed: true }));
@@ -569,6 +584,75 @@ class URDFViewer extends HTMLElement {
 
         });
 
+    }
+
+    _createAxesVisualization() {
+
+        if (!this.robot) return;
+        this._clearAxesVisualization();
+
+        const bbox = new THREE.Box3();
+        this.robot.traverse(c => { if (c.isURDFVisual) bbox.expandByObject(c); });
+        const modelSize = bbox.isEmpty() ? 0.2 : Math.max(...bbox.getSize(new THREE.Vector3()).toArray()) * 0.18;
+
+        const HEAD_LENGTH = 0.15;
+        const HEAD_RADIUS = 0.05;
+        const SHAFT_RADIUS = 0.02;
+
+        for (const jointName in this.robot.joints) {
+            const joint = this.robot.joints[jointName];
+            if (joint.jointType === 'fixed' || !joint.axis) continue;
+
+            const length = joint.jointType === 'prismatic' && joint.limit ? 
+                (joint.limit.upper - joint.limit.lower) : modelSize;
+            if (length <= 0) continue;
+
+            const pos = new THREE.Vector3();
+            const quat = new THREE.Quaternion();
+            joint.getWorldPosition(pos);
+            joint.getWorldQuaternion(quat);
+            const dir = joint.axis.clone().applyQuaternion(quat).normalize();
+
+            const arrow = new THREE.Group();
+            const color = joint.jointType === 'prismatic' ? 0x00ff00 : 0x00ffff;
+            const shaftLength = Math.max(0.01, length - HEAD_LENGTH);
+
+            const shaft = new THREE.Mesh(
+                new THREE.CylinderGeometry(SHAFT_RADIUS, SHAFT_RADIUS, shaftLength, 16),
+                new THREE.MeshBasicMaterial({ color })
+            );
+            shaft.raycast = emptyRaycast;
+            shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+            shaft.position.copy(dir.clone().multiplyScalar(shaftLength / 2));
+            shaft.scale.set(1, 1, 1);
+            arrow.add(shaft);
+
+            const cone = new THREE.Mesh(
+                new THREE.ConeGeometry(HEAD_RADIUS, HEAD_LENGTH, 16),
+                new THREE.MeshBasicMaterial({ color })
+            );
+            cone.raycast = emptyRaycast;
+            cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+            cone.position.copy(dir.clone().multiplyScalar(shaftLength + HEAD_LENGTH / 2));
+            cone.scale.set(1, 1, 1);
+            arrow.add(cone);
+
+            arrow.position.copy(pos);
+            arrow.raycast = emptyRaycast;
+            arrow.scale.set(1, 1, 1);
+            this.axesArrows.set(jointName, arrow);
+            this.axesGroup.add(arrow);
+        }
+
+        this.axesGroup.visible = this.showAxes;
+    }
+
+    _clearAxesVisualization() {
+        this.axesArrows.forEach(a => {
+            a.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+            this.axesGroup.remove(a);
+        });
+        this.axesArrows.clear();
     }
 
     // Watch the coordinate frame and update the

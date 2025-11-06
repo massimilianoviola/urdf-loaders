@@ -16,6 +16,7 @@ const viewer = document.querySelector('urdf-viewer');
 
 const limitsToggle = document.getElementById('ignore-joint-limits');
 const collisionToggle = document.getElementById('collision-toggle');
+const axesToggle = document.getElementById('axes-toggle');
 const radiansToggle = document.getElementById('radians-toggle');
 const autocenterToggle = document.getElementById('autocenter-toggle');
 const upSelect = document.getElementById('up-select');
@@ -53,6 +54,11 @@ radiansToggle.addEventListener('click', () => {
 collisionToggle.addEventListener('click', () => {
     collisionToggle.classList.toggle('checked');
     viewer.showCollision = collisionToggle.classList.contains('checked');
+});
+
+axesToggle.addEventListener('click', () => {
+    axesToggle.classList.toggle('checked');
+    viewer.showAxes = axesToggle.classList.contains('checked');
 });
 
 autocenterToggle.addEventListener('click', () => {
